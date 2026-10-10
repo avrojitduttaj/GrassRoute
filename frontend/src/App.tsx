@@ -14,7 +14,7 @@ import {
   Compass,
   LocateFixed,
   MapPin,
-  Navigation,
+  // Navigation,
   Play,
   ShieldCheck,
   Sparkles,
@@ -41,14 +41,19 @@ type NearbyResponse = {
   places: Place[];
   note?: string;
 };
+
 type MissionResponse = {
   mission?: {
     title?: string;
     objective?: string;
-    checkpoints?: { instruction: string; durationMinutes: number }[];
+    checkpoints?: {
+      instruction: string;
+      durationMinutes: number;
+    }[];
   };
   title?: string;
   objective?: string;
+  instructions?: string[];
   durationMinutes?: number;
   radiusMeters?: number;
   message?: string;
@@ -210,6 +215,10 @@ function App() {
     mission?.note ||
     "The backend has returned a preview. Next we will connect real places, pedestrian routes and the AI mission planner.";
   const checkpoints = mission?.mission?.checkpoints || [];
+
+  const missionInstructions =
+  mission?.instructions ||
+  checkpoints.map((checkpoint) => checkpoint.instruction);
 
   return (
     <main className="app-shell">
@@ -419,7 +428,7 @@ function App() {
                   <Popup>
                     <strong>{place.name}</strong>
                     <br />
-                    {place.category.replaceAll("_", " ")}
+                    {place.category.replace(/_/g, " ")}
                     <br />
                     {place.distanceFromStartMeters} m straight-line distance
                   </Popup>
@@ -484,19 +493,28 @@ function App() {
               <MapPin size={15} /> {places.length} mapped places nearby
             </span>
           </div>
-          {checkpoints.length > 0 && (
-            <div className="checkpoint-list">
-              {checkpoints.map((cp, i) => (
-                <div className="checkpoint" key={`${i}-${cp.instruction}`}>
-                  <span>{String(i + 1).padStart(2, "0")}</span>
-                  <div>
-                    {cp.instruction}
-                    <small>{cp.durationMinutes} min</small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {missionInstructions.length > 0 && (
+  <div className="checkpoint-list" aria-label="Mission instructions">
+    {missionInstructions.map((instruction, i) => {
+      const checkpoint = checkpoints[i];
+
+      return (
+        <div
+          className="checkpoint"
+          key={`${i}-${instruction}`}
+        >
+          <span>{String(i + 1).padStart(2, "0")}</span>
+          <div>
+            {instruction}
+            {checkpoint && (
+              <small>{checkpoint.durationMinutes} min</small>
+            )}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+)}
           <div className="preview-disclaimer">
             Preview only — this version does not start background GPS tracking
             or verify route safety. We’ll add those after pedestrian routing is
