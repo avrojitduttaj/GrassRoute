@@ -251,7 +251,8 @@ Contributions are welcome! Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), foll
 
 ## License
 
-**A license file has not yet been added to this repository.** Before advertising GrassRoute as an open-source release or accepting contributions for redistribution, choose a license and add it as `LICENSE` in the repository root. Until then, the code's reuse and redistribution permissions are not explicitly granted. If you're unsure which license fits your goals, review the options with a qualified advisor before choosing.
+GrassRoute is licensed under the MIT License.
+See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgements
 
