@@ -1,0 +1,17 @@
+/* Walking route integration */
+.route-place-button{display:block;width:100%;margin-top:8px;padding:7px 9px;border:1px solid #cbd9c3;border-radius:6px;background:#315b3b;color:#fff;font:600 11px 'DM Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.route-place-button:disabled{opacity:.65;cursor:wait}
+.route-summary{padding:14px 18px;background:#f2f6eb;border-top:1px solid #dfe8d5;border-bottom:1px solid #dfe8d5}
+.route-summary-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.route-summary-top strong{display:block;color:#315b3b;font:700 12px Manrope,sans-serif}
+.route-summary-top p{margin:4px 0 0;color:#798874;font-size:10px;line-height:1.45}
+.route-clear-button,.route-voice-button{border:1px solid #d1ddc8;border-radius:6px;background:#fffdf7;color:#416144;padding:7px 9px;font:600 10px 'DM Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.route-stats{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px;color:#526d4d;font-size:10px}
+.route-stats span,.route-voice-button{display:inline-flex;align-items:center;gap:6px}
+.route-voice-button{padding:6px 9px}
+.route-directions{margin-top:12px;color:#53654e;font-size:11px}
+.route-directions summary{cursor:pointer;font-weight:600}
+.route-directions ol{padding-left:22px;line-height:1.6}
+.route-directions li{padding:3px 0}
+.route-disclaimer{margin:10px 0 0;color:#8b806b;font-size:9px;line-height:1.5}
+@media(max-width:580px){.route-summary{padding:12px}.route-stats{gap:9px}.route-summary-top{align-items:flex-start}}

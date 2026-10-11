@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { getWalkingRoute } from "../services/maps/routing.service.js";
 
 const router = Router();
 
@@ -9,13 +10,24 @@ const nearbyQuerySchema = z.object({
   radiusMeters: z.coerce.number().int().min(100).max(10000),
 });
 
+const coordinatesSchema = z.object({
+  latitude: z.coerce.number().finite().min(-90).max(90),
+  longitude: z.coerce.number().finite().min(-180).max(180),
+});
+
+const walkingRouteRequestSchema = z.object({
+  start: coordinatesSchema,
+  destination: coordinatesSchema,
+});
+
 const OVERPASS_ENDPOINTS = [
+  "https://overpass.private.coffee/api/interpreter",
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.nchc.org.tw/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
 
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 20_000;
+const QUERY_CACHE_TTL_MS = 60_000;
 
 type OverpassElement = {
   type: string;
@@ -25,6 +37,14 @@ type OverpassElement = {
   center?: { lat: number; lon: number };
   tags?: Record<string, string>;
 };
+
+const queryCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    data: OverpassResponse;
+  }
+>();
 
 type OverpassResponse = {
   elements: OverpassElement[];
@@ -38,29 +58,22 @@ function distanceInMeters(
 ): number {
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
   const earthRadius = 6371000;
-
   const dLat = toRadians(lat2 - lat1);
   const dLon = toRadians(lon2 - lon1);
-
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRadians(lat1)) *
       Math.cos(toRadians(lat2)) *
       Math.sin(dLon / 2) ** 2;
-
-  // Protect against floating-point rounding outside [0, 1].
   const clampedA = Math.max(0, Math.min(1, a));
 
   return Math.round(
-    earthRadius *
-      2 *
-      Math.atan2(Math.sqrt(clampedA), Math.sqrt(1 - clampedA)),
+    earthRadius * 2 * Math.atan2(Math.sqrt(clampedA), Math.sqrt(1 - clampedA)),
   );
 }
 
 function isOverpassResponse(value: unknown): value is OverpassResponse {
   if (typeof value !== "object" || value === null) return false;
-
   const elements = (value as { elements?: unknown }).elements;
 
   return (
@@ -75,9 +88,16 @@ function isOverpassResponse(value: unknown): value is OverpassResponse {
   );
 }
 
-async function fetchNearbyPlaces(
-  query: string,
-): Promise<OverpassResponse> {
+async function fetchNearbyPlaces(query: string): Promise<OverpassResponse> {
+  const cached = queryCache.get(query);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  if (cached) {
+    queryCache.delete(query);
+  }
   let lastError = "No Overpass endpoint responded.";
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -95,18 +115,12 @@ async function fetchNearbyPlaces(
 
       if (!response.ok) {
         const details = (await response.text()).slice(0, 300);
-
-        lastError = `${endpoint} returned HTTP ${response.status}: ${
-          details || response.statusText
-        }`;
-
+        lastError = `${endpoint} returned HTTP ${response.status}: ${details || response.statusText}`;
         console.warn("Overpass endpoint failed:", {
           endpoint,
           status: response.status,
         });
 
-        // Invalid queries and other client errors won't be fixed
-        // by switching servers.
         if (
           response.status >= 400 &&
           response.status < 500 &&
@@ -117,21 +131,23 @@ async function fetchNearbyPlaces(
             statusCode: response.status,
           });
         }
-
         continue;
       }
 
       const data: unknown = await response.json();
-
       if (!isOverpassResponse(data)) {
         lastError = `${endpoint} returned an invalid response.`;
         console.warn(lastError);
         continue;
       }
 
+      queryCache.set(query, {
+        expiresAt: Date.now() + QUERY_CACHE_TTL_MS,
+        data,
+      });
+
       return data;
     } catch (error) {
-      // Do not retry permanent client errors such as an invalid query.
       if (
         typeof error === "object" &&
         error !== null &&
@@ -139,25 +155,60 @@ async function fetchNearbyPlaces(
       ) {
         throw error;
       }
-
-      lastError =
-        error instanceof Error ? error.message : String(error);
-
-      console.warn("Overpass request failed:", {
-        endpoint,
-        error: lastError,
-      });
+      lastError = error instanceof Error ? error.message : String(error);
+      console.warn("Overpass request failed:", { endpoint, error: lastError });
     }
   }
 
-  throw new Error(
-    `All Overpass endpoints failed. Last error: ${lastError}`,
-  );
+  throw new Error(`All Overpass endpoints failed. Last error: ${lastError}`);
 }
+
+/**
+ * POST /api/v1/maps/route
+ * Calculates a pedestrian route from start to destination and back to start.
+ * This endpoint is defined on the existing maps router, so app.ts needs no
+ * additional router registration.
+ */
+router.post("/route", async (req, res) => {
+  const parsed = walkingRouteRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid walking-route request",
+      details: parsed.error.flatten(),
+    });
+  }
+
+  const { start, destination } = parsed.data;
+  if (
+    start.latitude === destination.latitude &&
+    start.longitude === destination.longitude
+  ) {
+    return res.status(400).json({
+      error: "Choose a destination different from your starting point.",
+    });
+  }
+
+  try {
+    const route = await getWalkingRoute(start, destination);
+    return res.json({
+      start,
+      destination,
+      roundTrip: true,
+      ...route,
+      note: "Walking distance and time are estimates. Check access and surroundings; mapped data does not guarantee a place is public, open, or safe.",
+    });
+  } catch (error) {
+    console.error("Walking route calculation failed:", error);
+    return res.status(502).json({
+      error: "Could not calculate a pedestrian route.",
+      details:
+        error instanceof Error ? error.message : "The routing service failed.",
+    });
+  }
+});
 
 router.get("/nearby", async (req, res) => {
   const parsed = nearbyQuerySchema.safeParse(req.query);
-
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid location or search radius",
@@ -166,7 +217,6 @@ router.get("/nearby", async (req, res) => {
   }
 
   const { latitude, longitude, radiusMeters } = parsed.data;
-
   const query = `
     [out:json][timeout:12];
     (
@@ -193,7 +243,6 @@ router.get("/nearby", async (req, res) => {
       .map((element) => {
         const lat = element.lat ?? element.center?.lat;
         const lon = element.lon ?? element.center?.lon;
-
         if (
           lat === undefined ||
           lon === undefined ||
@@ -204,22 +253,15 @@ router.get("/nearby", async (req, res) => {
         }
 
         const tags = element.tags ?? {};
-
         const name =
           tags.name ??
           tags["name:en"] ??
           tags.leisure ??
           tags.natural ??
           "Unnamed green space";
-
         const category =
-          tags.leisure ??
-          tags.natural ??
-          tags.landuse ??
-          "green_space";
-
+          tags.leisure ?? tags.natural ?? tags.landuse ?? "green_space";
         const id = `${element.type}-${element.id}`;
-
         if (seen.has(id)) return null;
         seen.add(id);
 
@@ -241,34 +283,20 @@ router.get("/nearby", async (req, res) => {
       })
       .filter(
         (place): place is NonNullable<typeof place> =>
-          place !== null &&
-          place.distanceFromStartMeters <= radiusMeters,
+          place !== null && place.distanceFromStartMeters <= radiusMeters,
       )
-      .sort(
-        (a, b) =>
-          a.distanceFromStartMeters - b.distanceFromStartMeters,
-      );
+      .sort((a, b) => a.distanceFromStartMeters - b.distanceFromStartMeters);
 
     return res.json({
       origin: { latitude, longitude },
       radiusMeters,
       count: places.length,
       places,
-      note:
-        "Mapped green spaces only; access and walking-route safety are not verified.",
+      note: "Mapped green spaces only; access and walking-route safety are not verified.",
     });
   } catch (error) {
-    const statusCode =
-      typeof error === "object" &&
-      error !== null &&
-      "statusCode" in error &&
-      typeof error.statusCode === "number"
-        ? error.statusCode
-        : undefined;
-
     console.error("OpenStreetMap nearby search failed:", error);
-
-    return res.status(statusCode === 400 ? 502 : 502).json({
+    return res.status(502).json({
       error: "OpenStreetMap place search is temporarily unavailable.",
       details:
         error instanceof Error
