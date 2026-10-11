@@ -1,8 +1,8 @@
-import 'dotenv/config';
-import app from './app.js';
+import "dotenv/config";
+import app from "./app.js";
 
 const port = Number(process.env.PORT ?? 4000);
 
-app.listen(port, () => {
-  console.log(`GrassRoute API running at http://localhost:${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`GrassRoute API listening on port ${port}`);
 });
